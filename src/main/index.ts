@@ -178,6 +178,59 @@ async function bootstrap(): Promise<void> {
     }, 18_000)
   }
 
+  // 开发辅助：CHAT_PAGE_TEST="<会话标题>|<文本>|<click|draft|send>"
+  // 驱动真实页面走一遍「点开会话 / 输入 / 发送」，用于逐步人工确认
+  const pageTest = process.env.CHAT_PAGE_TEST
+  if (pageTest) {
+    const startedAt = Date.now()
+    // 等登录态真正就绪（桥接窗口建好）再动手，避免抢跑
+    const timer = setInterval(() => {
+      const active = service?.getSession().status === 'active'
+      if (!active && Date.now() - startedAt < 120_000) return
+      clearInterval(timer)
+      void (async () => {
+        const [title, text = '', rawMode = 'click'] = pageTest.split('|')
+        const mode = (['click', 'draft', 'send', 'clear'] as const).includes(
+          rawMode as 'click' | 'draft' | 'send' | 'clear'
+        )
+          ? (rawMode as 'click' | 'draft' | 'send' | 'clear')
+          : 'click'
+        try {
+          const res = await service?.debugPageDrive({ title, text, mode })
+          logger.info(`PAGE_TEST ${JSON.stringify(res)}`)
+        } catch (err) {
+          logger.warn(`PAGE_TEST 失败：${(err as Error).message}`)
+        }
+        try {
+          const shotPath = process.env.CHAT_PAGE_SHOT ?? '/tmp/dy-page-drive.png'
+          // 桥接窗口的标题会被页面 title 覆盖，按 URL 找更稳
+          const bridgeWin = BrowserWindow.getAllWindows().find((w) =>
+            w.webContents.getURL().includes('douyin.com')
+          )
+          if (bridgeWin) {
+            bridgeWin.moveTop()
+            await new Promise((r) => setTimeout(r, 400))
+            const image = await bridgeWin.webContents.capturePage()
+            writeFileSync(shotPath, image.toPNG())
+            logger.info(`PAGE_TEST 截图：${shotPath}`)
+          }
+        } catch (err) {
+          logger.warn(`PAGE_TEST 截图失败：${(err as Error).message}`)
+        }
+        // 草稿验证后必须复原输入框，不能在对话里留下半句话
+        if (mode === 'draft') {
+          try {
+            const cleaned = await service?.debugPageDrive({ title, text: '', mode: 'clear' })
+            logger.info(`PAGE_TEST 草稿清理：${JSON.stringify(cleaned)}`)
+          } catch (err) {
+            logger.warn(`PAGE_TEST 草稿清理失败：${(err as Error).message}`)
+          }
+        }
+        setTimeout(() => app.quit(), 1200)
+      })()
+    }, 1000)
+  }
+
   // 自动化验收：CHAT_DEMO=1 使用演示账号登录；CHAT_SCREENSHOT=<path> 截图后退出
   if (process.env.CHAT_DEMO === '1') {
     try {

@@ -1,8 +1,9 @@
-import { BrowserWindow, net, session } from 'electron'
+import { BrowserWindow, session } from 'electron'
 import { AppError } from '../../core/errors'
 import type { Logger } from '../../core/notifier'
 import { ImCollector, type IngestStats } from './im-collector'
-import { buildSendBody } from './im-send'
+import { PageDriver, type ComposerState, type SendButtonState } from './page-driver'
+import type { Message } from '@shared/types'
 
 /**
  * 把抖音网页当作「传输层」。
@@ -19,11 +20,11 @@ const PARTITION = 'persist:douyin-im'
 const DEFAULT_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
 
-/** 依次尝试的私信页地址；实测 `/user/self?showTab=message` 才会初始化 IM */
+/** 依次尝试的私信页地址；`/chat` 才是真正渲染会话列表与输入框的页面 */
 const ROUTE_CANDIDATES = [
+  'https://www.douyin.com/chat',
   'https://www.douyin.com/user/self?showTab=message',
-  'https://www.douyin.com/messages',
-  'https://www.douyin.com/'
+  'https://www.douyin.com/messages'
 ]
 
 export interface BridgeOptions {
@@ -32,6 +33,22 @@ export interface BridgeOptions {
   partition?: string
   /** 收到新数据时回调（用于即时触发一次同步） */
   onData?: (stats: IngestStats) => void
+}
+
+/** 页面驱动的结果。stage 表示流程走到哪一步，便于区分「点开了 / 输入了 / 发出去了」。 */
+export interface PageSendResult {
+  ok: boolean
+  stage: 'opened' | 'draft' | 'sent'
+  reason?: string
+  /** 实际点中的会话项原文（昵称 + 预览 + 时间） */
+  matched?: string
+  composer?: ComposerState
+  sendButton?: SendButtonState
+  via?: 'button' | 'enter'
+  /** 输入框是否已被清空（页面发出的直接信号） */
+  cleared?: boolean
+  /** 页面回推的、带服务端 ID 的消息 */
+  message?: Message
 }
 
 export class ImWebBridge {
@@ -62,6 +79,8 @@ export class ImWebBridge {
   private readonly logger?: Logger
   private readonly userAgent: string
   private readonly partition: string
+  /** 页面驱动（首次发送时创建，窗口重建后自动换新） */
+  private driver: PageDriver | null = null
 
   constructor(private readonly opts: BridgeOptions = {}) {
     this.logger = opts.logger
@@ -308,69 +327,162 @@ export class ImWebBridge {
   }
 
   /**
-   * 发送一条文本消息。
+   * 发送文本消息。
    *
-   * 请求体结构已从真实抓包完整解出（见 im-send.ts）。请求本身由页面发起，
-   * 这样 Cookie / a_bogus 签名 / 指纹都由页面负责，我们只提供 body。
+   * 不走自造 protobuf 请求，而是**驱动页面自己发**：点开会话 → 聚焦输入框 → 输入 → 提交。
+   * 这样 Cookie、identity_security_token、a_bogus 与风控指纹全部由官方前端产生，
+   * 客户端不需要（也不应该）复刻那套签名。
+   *
+   * mode：
+   *   click —— 只点开会话并确认输入框挂载，不输入任何内容（人工确认用）
+   *   draft —— 输入内容但不提交，并回传发送按钮信息（用于确认选择器）
+   *   send  —— 输入并提交
    */
-  async sendText(input: {
+  async sendViaPage(input: {
     conversationId: string
+    title: string
     text: string
-    selfUid: string
-    identityToken: string
-  }): Promise<{ ok: boolean; status: number; message: string }> {
-    const conv = this.collector.conversation(input.conversationId)
-    if (!conv) return { ok: false, status: 0, message: '会话不存在（需要先同步一次）' }
-    if (!conv.convToken) return { ok: false, status: 0, message: '缺少会话 token（会话 #4 为空）' }
+    mode?: 'click' | 'draft' | 'send' | 'clear'
+  }): Promise<PageSendResult> {
+    const win = this.win
+    if (!win || win.isDestroyed()) {
+      return { ok: false, stage: 'opened', reason: '页面窗口未创建' }
+    }
+    if (!this.attached) {
+      return { ok: false, stage: 'opened', reason: '调试通道未就绪' }
+    }
 
-    const { body, clientId } = buildSendBody({
-      conversationId: input.conversationId,
-      text: input.text,
-      conversationToken: conv.convToken,
-      identityToken: input.identityToken,
-      selfUid: input.selfUid
-    })
+    // 让窗口可见：发送过程要能在屏幕上看到，出问题也便于立刻接手
+    win.show()
+    win.focus()
 
-    // 用主进程的 session.fetch：不带 CORS 约束，且自动带上该分区的 Cookie
-    const ses = session.fromPartition(this.partition)
-    const url = 'https://imapi.douyin.com/v1/message/send' + (process.env.CHAT_SEND_QUERY ?? '')
-    try {
-      // 用 net.request：不走 CORS 检查，且能指定 session 复用分区 Cookie
-      const buf = await new Promise<{ status: number; body: Buffer }>((resolve, reject) => {
-        const req = net.request({ method: 'POST', url, session: ses, useSessionCookies: true })
-        req.setHeader('content-type', 'application/x-protobuf')
-        const chunks: Buffer[] = []
-        req.on('response', (res) => {
-          res.on('data', (c: Buffer) => chunks.push(c))
-          res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }))
-          res.on('error', reject)
-        })
-        req.on('error', reject)
-        req.write(Buffer.from(body))
-        req.end()
-      })
-      this.logger?.info(
-        `BRIDGE 发送返回：status=${buf.status} bytes=${buf.body.length} clientId=${clientId} head=${buf.body
-          .subarray(0, 90)
-          .toString('latin1')
-          .replace(/[^\x20-\x7e]/g, '·')}`
-      )
-      return { ok: buf.status === 200, status: buf.status, message: buf.body.subarray(0, 200).toString('latin1') }
-    } catch (err) {
-      this.logger?.warn(`BRIDGE 发送异常：${(err as Error).message}`)
-      return { ok: false, status: 0, message: (err as Error).message }
+    const driver = this.pageDriver()
+    const mode = input.mode ?? 'send'
+
+    if (!(await driver.openChatPage())) {
+      return { ok: false, stage: 'opened', reason: '私信页没有加载出会话列表' }
+    }
+
+    const opened = await driver.openConversation(input.title)
+    if (!opened.ok) {
+      return { ok: false, stage: 'opened', reason: opened.reason ?? '没能点开会话' }
+    }
+    driver.log(`已点开会话：${opened.matched ?? input.title}`)
+
+    const composer = await driver.waitForComposer()
+    if (!composer.found) {
+      return { ok: false, stage: 'opened', reason: '会话已打开，但输入框没有出现', matched: opened.matched }
+    }
+
+    if (mode === 'click') {
+      driver.log(`CLICK 会话已打开 · 输入框 ${composer.rect?.join('x') ?? '?'} · 未输入任何内容`)
+      return { ok: true, stage: 'opened', matched: opened.matched, composer }
+    }
+
+    if (mode === 'clear') {
+      const focused = await driver.focusComposer()
+      const cleared = focused ? await driver.clearComposer() : false
+      return {
+        ok: cleared,
+        stage: 'draft',
+        reason: cleared ? undefined : '清空输入框失败（可能没拿到焦点）',
+        matched: opened.matched,
+        composer: await driver.composer()
+      }
+    }
+
+    const focused = await driver.focusComposer()
+    if (!focused) {
+      return { ok: false, stage: 'opened', reason: '输入框拿不到焦点', matched: opened.matched, composer }
+    }
+    const typed = await driver.typeText(input.text)
+    if (!typed) {
+      return { ok: false, stage: 'opened', reason: '文字没有进入输入框', matched: opened.matched, composer }
+    }
+
+    if (mode === 'draft') {
+      const sendButton = await driver.sendButton()
+      driver.log(`DRAFT 已输入 ${input.text.length} 字 · 发送按钮 ${sendButton.found ? sendButton.label : '未找到'}`)
+      return { ok: true, stage: 'draft', matched: opened.matched, composer: await driver.composer(), sendButton }
+    }
+
+    const startedAt = Date.now()
+    const submitted = await driver.submit()
+    let via: 'button' | 'enter' = submitted.via
+    let cleared = await driver.waitForComposerEmpty(3000)
+    if (!cleared) {
+      // 回车没反应就改用右侧图标按钮（发送按钮是纯图标，选择器不一定能抓到）
+      driver.log('回车后输入框未清空，改用按钮兜底')
+      if (await driver.clickSendFallback()) {
+        cleared = await driver.waitForComposerEmpty(5000)
+        if (cleared) via = 'button'
+      }
+    }
+    driver.log(`SUBMIT via=${via} cleared=${cleared}`)
+
+    const message = await this.waitForOutgoing(input.conversationId, input.text, startedAt, 8000)
+    return {
+      ok: true,
+      stage: 'sent',
+      matched: opened.matched,
+      via,
+      cleared,
+      message: message ?? undefined,
+      composer: await driver.composer()
     }
   }
 
-  /** 记录页面最近一次 imapi 请求的 query，发送时复用（含 msToken 等） */
-  private sendUrl: string | null = null
-
-  setSendUrl(url: string): void {
-    this.sendUrl = url
+  /** 等页面把刚发出的消息回推过来（拿到服务端消息 ID，避免本地重复气泡） */
+  private async waitForOutgoing(
+    conversationId: string,
+    text: string,
+    since: number,
+    timeoutMs: number
+  ): Promise<Message | null> {
+    const want = text.trim()
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      const hit = this.collector
+        .snapshot()
+        .messages.find(
+          (m) =>
+            m.conversationId === conversationId &&
+            m.isSelf &&
+            m.createdAt >= since - 5000 &&
+            (m.content.text ?? '').trim() === want
+        )
+      if (hit) return hit
+      await delay(300)
+    }
+    return null
   }
 
-  private buildSendUrl(): string {
-    return 'https://imapi.douyin.com/v1/message/send'
+  /** 会话详情（标题用于在页面列表里定位） */
+  conversation(id: string): ReturnType<ImCollector['conversation']> {
+    return this.collector.conversation(id)
+  }
+
+  private pageDriver(): PageDriver {
+    const wc = this.win?.webContents
+    if (!wc) throw new AppError('SERVER', '页面窗口未创建')
+    if (!this.driver) {
+      this.driver = new PageDriver(wc, (method, params) => this.cdp(method, params), this.logger)
+    }
+    return this.driver
+  }
+
+  /** 开发诊断：直接驱动页面，不经过 ChatService（便于「只点开会话」验证） */
+  async debugPageDrive(input: {
+    title: string
+    text: string
+    mode: 'click' | 'draft' | 'send' | 'clear'
+  }): Promise<PageSendResult> {
+    return this.sendViaPage({
+      conversationId: '',
+      title: input.title,
+      text: input.text,
+      mode: input.mode
+    })
   }
 
   /** 还没拿到昵称、需要查询的 sec_uid */
@@ -416,6 +528,7 @@ export class ImWebBridge {
   async stop(): Promise<void> {
     const win = this.win
     this.win = null
+    this.driver = null
     if (!win || win.isDestroyed()) return
     try {
       if (win.webContents.debugger.isAttached()) win.webContents.debugger.detach()
@@ -467,6 +580,7 @@ export class ImWebBridge {
     this.win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     this.win.on('closed', () => {
       this.win = null
+      this.driver = null
       this.attached = false
     })
     // 用户在窗口里手动操作时，保持会话

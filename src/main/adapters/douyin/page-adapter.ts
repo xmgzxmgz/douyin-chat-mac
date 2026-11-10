@@ -45,9 +45,12 @@ interface SelfProfile {
  */
 export class DouyinPageAdapter implements ChatAdapter {
   readonly mode = 'douyin-web' as const
-  /** 拿到 identity token 后开启（见 sendMessage 注释） */
+  /**
+   * 发送现在走「页面驱动」：由官方前端自己点会话、输入、提交，
+   * 不再需要外部提供 identity_security_token。可用 CHAT_DISABLE_SEND=1 临时关闭。
+   */
   get canSend(): boolean {
-    return process.env.CHAT_ENABLE_SEND === '1' && Boolean(process.env.CHAT_IDENTITY_TOKEN)
+    return process.env.CHAT_DISABLE_SEND !== '1'
   }
 
   private readonly bridge: ImWebBridge
@@ -202,10 +205,11 @@ export class DouyinPageAdapter implements ChatAdapter {
   }
 
   /**
-   * 发送文本消息。
+   * 发送文本消息（页面驱动）。
    *
-   * 请求体结构来自一次真实抓包（cmd=100，见 im-send.ts）；请求由页面同源发出，
-   * Cookie / a_bogus / 指纹都交给页面。唯一需要外部提供的是 identity_security_token。
+   * 不再自己拼 protobuf 请求：那条路要在客户端复刻页面侧 token，且服务端判定为重放后
+   * 直接 KICK（已实测）。现在改成让官方页面自己走一遍「点会话 → 输入 → 发送」，
+   * 签名与风控指纹都由页面产生，客户端只负责代点。
    */
   async sendMessage(input: {
     conversationId: string
@@ -218,16 +222,33 @@ export class DouyinPageAdapter implements ChatAdapter {
     const text = (input.content.text ?? '').trim()
     if (!text) throw new AppError('VALIDATION', '消息内容不能为空')
 
-    const identityToken = process.env.CHAT_IDENTITY_TOKEN ?? ''
-    if (!identityToken) throw new AppError('UNSUPPORTED', '缺少 identity_security_token，发送未启用')
+    const conv = this.bridge.conversation(input.conversationId)
+    if (!conv) throw new AppError('NOT_FOUND', '会话不存在，请先同步一次再发送')
+    if (!conv.title) throw new AppError('UNSUPPORTED', '这个会话没有昵称，无法在页面列表里定位')
 
-    const res = await this.bridge.sendText({
+    const res = await this.bridge.sendViaPage({
       conversationId: input.conversationId,
+      title: conv.title,
       text,
-      selfUid: this.selfId,
-      identityToken
+      mode: 'send'
     })
-    if (!res.ok) throw new AppError('SERVER', `发送失败（HTTP ${res.status}）：${res.message}`)
+    if (!res.ok) throw new AppError('UNSUPPORTED', res.reason ?? '页面发送失败')
+    if (!res.cleared && !res.message) {
+      throw new AppError('SERVER', '已提交但输入框没有清空，这条可能没有发出')
+    }
+
+    // 页面回推的消息带服务端 ID，直接用它落库：后续同步不会再多出一条重复气泡
+    if (res.message) {
+      return {
+        ...res.message,
+        accountId: this.accountId,
+        clientId: input.clientId,
+        senderId: this.selfId || res.message.senderId,
+        senderName: '我',
+        isSelf: true,
+        status: 'sent'
+      }
+    }
 
     return {
       id: `local_${input.clientId}`,
@@ -242,6 +263,15 @@ export class DouyinPageAdapter implements ChatAdapter {
       createdAt: Date.now(),
       status: 'sent'
     }
+  }
+
+  /** 开发诊断：只驱动页面，不写库（用于「只点开会话」的人工确认） */
+  debugPageDrive(input: {
+    title: string
+    text: string
+    mode: 'click' | 'draft' | 'send' | 'clear'
+  }): Promise<unknown> {
+    return this.bridge.debugPageDrive(input)
   }
 
   async recallMessage(): Promise<void> {

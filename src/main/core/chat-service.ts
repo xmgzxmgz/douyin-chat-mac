@@ -450,6 +450,22 @@ export class ChatService {
     this.store.deleteMessage(messageId)
   }
 
+  /**
+   * 开发诊断：把一次「点开会话 / 输入草稿 / 真正发送」交给真实适配器执行，不写库。
+   * 仅用于验证页面驱动链路，正常业务路径仍然是 send()。
+   */
+  async debugPageDrive(input: {
+    title: string
+    text: string
+    mode: 'click' | 'draft' | 'send' | 'clear'
+  }): Promise<unknown> {
+    const adapter = this.adapter as unknown as
+      | { debugPageDrive?: (i: typeof input) => Promise<unknown> }
+      | null
+    if (!adapter?.debugPageDrive) return { ok: false, reason: '当前适配器不支持页面驱动' }
+    return adapter.debugPageDrive(input)
+  }
+
   async sendTyping(conversationId: string): Promise<void> {
     await this.adapter?.sendTyping(conversationId)
   }
