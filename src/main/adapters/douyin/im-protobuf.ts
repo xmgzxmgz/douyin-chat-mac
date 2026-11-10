@@ -278,10 +278,6 @@ const CARD_KIND: Record<number, string> = {
 
 const asString = (v: unknown): string => (typeof v === 'string' ? v : '')
 
-/**
- * 取一个可用的 URL 值。抖音的封面/头像字段有三种形态：
- *   字符串、"数组"、以及最常见的 `{ url_list: [...] }` 嵌套结构。
- */
 function pickUrlValue(v: unknown): string {
   const ok = (x: unknown): x is string => typeof x === 'string' && /^(https?:\/\/|data:image\/)/.test(x)
   if (ok(v)) return v
@@ -298,6 +294,22 @@ function firstUrl(content: Record<string, unknown> | null, keys: string[]): stri
   for (const key of keys) {
     const found = pickUrlValue(content[key])
     if (found) return found
+  }
+  return ''
+}
+
+/**
+ * 从 `{ medium_url_list: [...], origin_url_list: [...] }` 这类结构里按优先级取地址。
+ * 图片消息的地址都在 resource_url 里，且只有这种 *_url_list 形式。
+ */
+function urlFromList(value: unknown, keys: string[]): string {
+  if (!value || typeof value !== 'object') return ''
+  const obj = value as Record<string, unknown>
+  for (const key of keys) {
+    const list = obj[key]
+    if (!Array.isArray(list)) continue
+    const hit = list.find((x) => typeof x === 'string' && /^https?:\/\//.test(x))
+    if (typeof hit === 'string') return hit
   }
   return ''
 }
@@ -324,26 +336,54 @@ export function buildContent(
       return {
         text: name,
         emojiName: name,
-        url: firstUrl(content, ['url', 'light_url', 'cover_url', 'stickers', 'joker_stickers']),
+        // 收藏表情/评论贴纸的真实图片地址就在这里（实测是普通 PNG，可直接渲染）
+        url:
+          pickUrlValue(content.url) ||
+          pickUrlValue(content.light_url) ||
+          firstUrl(content, ['url', 'light_url', 'cover_url', 'stickers', 'joker_stickers']),
         width: Number(content.width) || undefined,
         height: Number(content.height) || undefined
       }
     }
 
-    case 'image':
+    case 'image': {
+      // 图片消息的原图走 ImageX 加密流，直接下载是密文；
+      // 但每条消息都带一份未加密的 inline_pic 预览（WebP base64），用它先显示。
+      const resource = content.resource_url as Record<string, unknown> | undefined
+      const url =
+        urlFromList(resource, ['medium_url_list', 'large_url_list', 'origin_url_list']) ||
+        firstUrl(content, ['url_list', 'origin_url', 'url', 'big_url', 'cover_url'])
+      const inline = asString(content.inline_pic)
+      const thumbUrl = inline
+        ? inline.startsWith('data:')
+          ? inline
+          : `data:image/webp;base64,${inline}`
+        : ''
       return {
-        url: firstUrl(content, ['url_list', 'inline_pic', 'origin_url', 'url', 'big_url', 'cover_url']),
-        width: Number(content.width ?? content.cover_width) || undefined,
-        height: Number(content.height ?? content.cover_height) || undefined
+        url,
+        thumbUrl,
+        width: Number(content.cover_width ?? content.width) || undefined,
+        height: Number(content.cover_height ?? content.height) || undefined
       }
+    }
 
     case 'voice': {
       // 线上 duration 是毫秒；直接显示会变成「3400″」
       const raw = Number(content.duration ?? 0)
       const seconds = raw > 300 ? Math.round(raw / 1000) : Math.round(raw)
+      const wave = Array.isArray(content.voice_wave)
+        ? (content.voice_wave as unknown[])
+            .map((n) => Number(n))
+            .filter((n) => Number.isFinite(n))
+            .slice(0, 24)
+        : undefined
+      // ai_audio_text 是服务端转写结果：在抖音里点过「转文字」后这里就会有内容
+      const transcript = asString(content.ai_audio_text).trim()
       return {
-        url: firstUrl(content, ['resource_url', 'url']),
-        duration: seconds || undefined
+        url: firstUrl(content, ['resource_url', 'url']) || urlFromList(content.resource_url, ['url_list']),
+        duration: seconds || undefined,
+        text: transcript || undefined,
+        wave
       }
     }
 

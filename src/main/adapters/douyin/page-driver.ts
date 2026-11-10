@@ -271,7 +271,7 @@ export class PageDriver {
         return cs.visibility !== 'hidden' && cs.display !== 'none';
       };
       const labelOf = (el) => norm(el.innerText) || el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('data-e2e') || '';
-      const cands = [...document.querySelectorAll('button, [role="button"], [data-e2e*="send"], [class*="send"]')].filter(vis);
+      const cands = [...document.querySelectorAll('button, [role="button"], [data-e2e*="send"], [class*="send"], .e2e-send-msg-btn, [class*="publishBtn"]')].filter(vis);
       const el = cands.find((e) => /^发送$/.test(labelOf(e)) && !e.disabled)
         || cands.find((e) => /发送/.test(labelOf(e)) && !e.disabled)
         || cands.find((e) => /send/i.test(e.getAttribute('data-e2e') || '') && !e.disabled);

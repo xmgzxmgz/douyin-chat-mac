@@ -1,6 +1,6 @@
 {
   "name": "douyin-chat-mac",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "抖音桌面聊天（macOS）— Electron 客户端，可插拔适配器架构",
   "main": "./out/main/index.js",
   "author": "local",

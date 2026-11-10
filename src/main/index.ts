@@ -91,7 +91,8 @@ function bootstrapService(): ChatService {
           logger,
           onData: () => {
             const now = Date.now()
-            if (now - lastNudge < 1200) return
+            // 捕获到新数据就立刻落库；节流压到 300ms，避免密集帧时反复重排
+            if (now - lastNudge < 300) return
             lastNudge = now
             void service?.syncNow().catch((err) => logger.debug(`即时同步失败：${(err as Error).message}`))
           }

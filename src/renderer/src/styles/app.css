@@ -715,6 +715,46 @@ img {
   gap: 9px;
   min-width: 82px;
 }
+.bubble-voice.has-text {
+  flex-wrap: wrap;
+}
+.voice-play {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: currentColor;
+  color: #fff;
+  cursor: pointer;
+  flex: none;
+  opacity: 0.9;
+}
+.voice-play svg {
+  color: #fff;
+}
+.msg.self .bubble-voice .voice-play {
+  background: rgba(255, 255, 255, 0.92);
+}
+.msg.self .bubble-voice .voice-play svg {
+  color: #fe2c55;
+}
+.voice-play:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.voice-text {
+  flex-basis: 100%;
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  opacity: 0.9;
+  padding-top: 6px;
+  border-top: 1px dashed currentColor;
+}
 .wave {
   display: flex;
   align-items: flex-end;

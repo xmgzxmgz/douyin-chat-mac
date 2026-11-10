@@ -71,6 +71,8 @@ export interface MessageContent {
   width?: number
   height?: number
   duration?: number
+  /** 语音波形（0~1 的振幅采样），来自消息体里的 voice_wave */
+  wave?: number[]
   emojiName?: string
   title?: string
   desc?: string

@@ -216,15 +216,51 @@ describe('IM protobuf · 富内容解析', () => {
     expect(body.width).toBe(120)
   })
 
-  it('语音：毫秒转秒', () => {
+  it('语音：毫秒转秒、波形与转写文本', () => {
     expect(buildContent(17, 'voice', { duration: 3400 }).duration).toBe(3)
     expect(buildContent(17, 'voice', { duration: 8 }).duration).toBe(8)
+    const body = buildContent(17, 'voice', {
+      duration: 4500,
+      resource_url: { url_list: ['https://cdn/a.mpeg'] },
+      voice_wave: [0, 0.46, 0.36],
+      ai_audio_text: '你好呀'
+    })
+    expect(body.url).toBe('https://cdn/a.mpeg')
+    expect(body.duration).toBe(5)
+    expect(body.wave).toEqual([0, 0.46, 0.36])
+    expect(body.text).toBe('你好呀')
   })
 
-  it('图片：兼容 data: 内联与 url_list', () => {
+  it('图片：原图取 resource_url，未加密的内联预览放 thumbUrl', () => {
+    const body = buildContent(27, 'image', {
+      cover_width: 1440,
+      cover_height: 1920,
+      inline_pic: 'UklGRuQPAABXRUJQVlA4WAo',
+      resource_url: {
+        medium_url_list: ['https://cdn/m.webp'],
+        origin_url_list: ['https://cdn/o.webp']
+      }
+    })
+    expect(body.url).toBe('https://cdn/m.webp')
+    expect(body.thumbUrl).toBe('data:image/webp;base64,UklGRuQPAABXRUJQVlA4WAo')
+    expect(body.width).toBe(1440)
+    expect(body.height).toBe(1920)
+  })
+
+  it('图片：只有 url_list 时也能取到地址', () => {
     expect(buildContent(27, 'image', { url_list: ['https://cdn/a.jpg'] }).url).toBe('https://cdn/a.jpg')
-    expect(buildContent(27, 'image', { inline_pic: 'data:image/png;base64,AAA' }).url).toBe(
+    expect(buildContent(27, 'image', { inline_pic: 'data:image/png;base64,AAA' }).thumbUrl).toBe(
       'data:image/png;base64,AAA'
     )
+  })
+
+  it('表情：url 是 { url_list } 结构时也能解出贴纸地址', () => {
+    const body = buildContent(5, 'emoji', {
+      url: { uri: 'tos-cn-i-x/abc', url_list: ['https://cdn/obj/abc'] },
+      width: 180,
+      height: 180
+    })
+    expect(body.url).toBe('https://cdn/obj/abc')
+    expect(body.width).toBe(180)
   })
 })

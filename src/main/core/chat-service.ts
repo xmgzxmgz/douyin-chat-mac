@@ -600,10 +600,11 @@ export class ChatService {
         this.emit({ type: 'session:changed', payload: this.getSession() })
         this.emit({ type: 'toast', payload: { level: 'warn', text: '登录状态已失效，请重新登录' } })
       },
-      // 真实 IM 的 init 响应较大（含每个会话最近消息），轮询过频会浪费流量
+      // 页面模式下的「拉取」只是读桥接层的内存快照，不产生任何网络请求；
+      // 真正打 imapi 的是页面自己。所以这里可以用秒级间隔，不必压到 30s。
       intervalMs:
         this.account?.mode === 'douyin-web'
-          ? Math.max(30_000, this.syncIntervalMs)
+          ? Math.min(2_000, Math.max(1_000, this.syncIntervalMs))
           : this.syncIntervalMs
     })
     this.sync.start()
@@ -769,7 +770,9 @@ export class ChatService {
     const next = this.store.updateSettings(patch)
     if (patch.pollIntervalMs && this.sync) {
       const ms =
-        this.account?.mode === 'douyin-web' ? Math.max(30_000, patch.pollIntervalMs) : patch.pollIntervalMs
+        this.account?.mode === 'douyin-web'
+          ? Math.min(2_000, Math.max(1_000, patch.pollIntervalMs))
+          : patch.pollIntervalMs
       this.sync.setIntervalMs(ms)
     }
     return next

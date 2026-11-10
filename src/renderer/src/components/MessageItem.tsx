@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import type { Message } from '@shared/types'
 import { formatMessageTime, formatFileSize } from '../lib/format'
 import { Avatar } from './Avatar'
@@ -119,16 +119,51 @@ function Content({
   onOpenShare?: (payload: { url: string; title: string; kind?: string }) => void
 }): React.JSX.Element {
   const c = message.content
+  // 语音：用原生 Audio 播放 CDN 上的 mpeg/m4a；转写文本来自消息体的 ai_audio_text
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const [playing, setPlaying] = useState(false)
+  useEffect(() => {
+    const audio = audioRef.current
+    return () => {
+      audio?.pause()
+    }
+  }, [])
+
+  const toggleVoice = (url: string): void => {
+    if (!url) return
+    if (!audioRef.current) {
+      const audio = new Audio(url)
+      audio.onended = () => setPlaying(false)
+      audio.onerror = () => setPlaying(false)
+      audioRef.current = audio
+    }
+    const audio = audioRef.current
+    if (playing) {
+      audio.pause()
+      setPlaying(false)
+      return
+    }
+    void audio
+      .play()
+      .then(() => setPlaying(true))
+      .catch(() => setPlaying(false))
+  }
+
   switch (message.type) {
-    case 'image':
-      return c.url?.startsWith('data:') || c.url?.startsWith('http') ? (
+    case 'image': {
+      // 原图是 ImageX 加密流，渲染不了；优先用消息自带的内联预览图（未加密的 WebP）
+      const preview = c.thumbUrl || (/^https?:|^data:/.test(c.url ?? '') ? c.url : '')
+      return preview ? (
         <img
           className="bubble-image"
-          src={c.url}
+          src={preview}
           alt={c.name ?? '图片'}
           draggable={false}
-          title="点击在浏览器中查看大图"
-          onClick={() => openExternal(c.url)}
+          title={c.thumbUrl ? '这是消息自带的预览图' : '点击在浏览器中查看大图'}
+          onClick={() => {
+            // 只有非内联预览（真实 http 地址）才值得外部打开
+            if (!c.thumbUrl && c.url) openExternal(c.url)
+          }}
         />
       ) : (
         <div className="bubble-file">
@@ -141,6 +176,7 @@ function Content({
           </div>
         </div>
       )
+    }
 
     case 'emoji':
       // 抖音表情是图片消息，自带 CDN 地址；拿不到地址时退化成文本标记
@@ -162,13 +198,23 @@ function Content({
 
     case 'voice':
       return (
-        <div className="bubble-voice">
+        <div className={`bubble-voice${c.text ? ' has-text' : ''}`}>
+          <button
+            type="button"
+            className={`voice-play${playing ? ' playing' : ''}`}
+            onClick={() => toggleVoice(c.url ?? '')}
+            disabled={!c.url}
+            title={c.url ? '播放语音' : '缺少音频地址'}
+          >
+            <Icon name={playing ? 'pause' : 'play'} size={14} />
+          </button>
           <span className="wave">
-            {[8, 14, 20, 12, 18, 10].map((h, i) => (
-              <i key={i} style={{ height: h }} />
+            {(c.wave?.length ? c.wave : [0.4, 0.7, 1, 0.6, 0.9, 0.5]).map((v, i) => (
+              <i key={i} style={{ height: 6 + Math.round(Math.min(1, Math.abs(v)) * 16) }} />
             ))}
           </span>
           <span>{c.duration ?? 0}&quot;</span>
+          {c.text ? <p className="voice-text">{c.text}</p> : null}
         </div>
       )
 

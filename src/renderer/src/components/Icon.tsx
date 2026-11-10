@@ -23,6 +23,13 @@ const PATHS: Record<string, React.ReactNode> = {
     </>
   ),
   pin: <path d="M9 4h6l-1 6 4 4v2h-5v6l-1 1-1-1v-6H6v-2l4-4-1-6Z" />,
+  play: <path d="M8 5.5v13l11-6.5-11-6.5Z" />,
+  pause: (
+    <>
+      <path d="M9 5v14" />
+      <path d="M15 5v14" />
+    </>
+  ),
   bellOff: (
     <>
       <path d="M18 8a6 6 0 0 0-9.3-5" />
