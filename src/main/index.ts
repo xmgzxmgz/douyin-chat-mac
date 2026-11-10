@@ -161,21 +161,58 @@ async function bootstrap(): Promise<void> {
     }, 700)
   }
 
-  // 开发辅助：CHAT_SEND_TEST="<conversationId>|<文本>" 启动后发一条消息并打印结果
+  // 开发辅助：CHAT_SEND_TEST="<conversationId>|<文本>" 启动后走完整业务路径发一条消息
   if (process.env.CHAT_SEND_TEST) {
-    setTimeout(() => {
+    const armedAt = Date.now()
+    const timer = setInterval(() => {
+      const active = service?.getSession().status === 'active'
+      if (!active && Date.now() - armedAt < 120_000) return
+      clearInterval(timer)
       void (async () => {
         const [convId, ...rest] = (process.env.CHAT_SEND_TEST as string).split('|')
         try {
-          const m = await service?.send({ conversationId: convId, type: 'text', content: { text: rest.join('|') } })
-          if (!m) throw new Error('ChatService 未就绪')
-          logger.info(`SEND 成功 id=${m.id} status=${m.status}`)
+          const optimistic = await service?.send({
+            conversationId: convId,
+            type: 'text',
+            content: { text: rest.join('|') }
+          })
+          if (!optimistic?.clientId) throw new Error('ChatService 未就绪')
+          // send() 只返回乐观消息，真正的结果在发送队列里；等它落定再下结论
+          const clientId = optimistic.clientId
+          const deadline = Date.now() + 45_000
+          let final = optimistic
+          while (Date.now() < deadline) {
+            const cur = store?.getMessageByClientId(clientId)
+            if (cur && (cur.status === 'sent' || cur.status === 'failed')) {
+              final = cur
+              break
+            }
+            await new Promise((r) => setTimeout(r, 500))
+          }
+          logger.info(
+            `SEND 结果 status=${final.status} id=${final.id} err=${final.errorMessage ?? ''}`
+          )
         } catch (err) {
           logger.warn(`SEND 失败：${(err as Error).message}`)
         }
-        setTimeout(() => app.quit(), 2000)
+        try {
+          const shotPath = process.env.CHAT_SEND_SHOT ?? '/tmp/dy-send-result.png'
+          const bridgeWin = BrowserWindow.getAllWindows().find((w) =>
+            w.webContents.getURL().includes('douyin.com')
+          )
+          if (bridgeWin) {
+            bridgeWin.moveTop()
+            await new Promise((r) => setTimeout(r, 600))
+            const image = await bridgeWin.webContents.capturePage()
+            writeFileSync(shotPath, image.toPNG())
+            logger.info(`SEND 截图：${shotPath}`)
+          }
+        } catch (err) {
+          logger.warn(`SEND 截图失败：${(err as Error).message}`)
+        }
+        setTimeout(() => app.quit(), 3000)
       })()
-    }, 18_000)
+    }, 1000)
   }
 
   // 开发辅助：CHAT_PAGE_TEST="<会话标题>|<文本>|<click|draft|send>"

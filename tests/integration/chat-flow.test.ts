@@ -302,3 +302,94 @@ describe('端到端 · 生命周期', () => {
     expect(ctx.service.listConversations().every((c) => c.accountId === 'acc_second')).toBe(true)
   })
 })
+
+describe('端到端 · 自己发出的消息不会重复', () => {
+  let ctx: Ctx
+  beforeEach(async () => {
+    ctx = await setup()
+  })
+
+  it('同步回来的服务端消息会认领本地占位消息，只保留一条', async () => {
+    const conv = ctx.service.listConversations()[0]
+    const sentAt = Date.now()
+    // 页面驱动发送后本地先落的占位消息
+    ctx.store.appendMessage({
+      id: 'local_c_test',
+      clientId: 'c_test',
+      accountId: ctx.accountId,
+      conversationId: conv.id,
+      type: 'text',
+      content: text('测试消息（客户端发送）'),
+      senderId: ctx.service.getSession().account!.id,
+      senderName: '我',
+      isSelf: true,
+      createdAt: sentAt,
+      status: 'sent'
+    })
+
+    // 同步回来的同一条消息：ID 是服务端的，时间晚一点
+    await (ctx.service as unknown as { applyPull: (r: unknown) => Promise<void> }).applyPull({
+      conversations: [],
+      messages: [
+        {
+          id: '7400123456789012345',
+          accountId: ctx.accountId,
+          conversationId: conv.id,
+          type: 'text',
+          content: text('测试消息（客户端发送）'),
+          senderId: ctx.service.getSession().account!.id,
+          senderName: '我',
+          isSelf: true,
+          createdAt: sentAt + 1200,
+          status: 'sent'
+        }
+      ],
+      cursor: 0
+    })
+
+    const list = ctx.store
+      .listMessages(conv.id, undefined, 50)
+      .filter((m) => (m.content.text ?? '') === '测试消息（客户端发送）')
+    expect(list).toHaveLength(1)
+    expect(list[0].id).toBe('7400123456789012345')
+    expect(list[0].clientId).toBe('c_test')
+  })
+
+  it('文本不同的自己消息不会被误认领', async () => {
+    const conv = ctx.service.listConversations()[0]
+    const sentAt = Date.now()
+    ctx.store.appendMessage({
+      id: 'local_c_other',
+      clientId: 'c_other',
+      accountId: ctx.accountId,
+      conversationId: conv.id,
+      type: 'text',
+      content: text('第一条'),
+      senderId: ctx.service.getSession().account!.id,
+      senderName: '我',
+      isSelf: true,
+      createdAt: sentAt,
+      status: 'sent'
+    })
+    await (ctx.service as unknown as { applyPull: (r: unknown) => Promise<void> }).applyPull({
+      conversations: [],
+      messages: [
+        {
+          id: '7400999999999999999',
+          accountId: ctx.accountId,
+          conversationId: conv.id,
+          type: 'text',
+          content: text('第二条'),
+          senderId: ctx.service.getSession().account!.id,
+          senderName: '我',
+          isSelf: true,
+          createdAt: sentAt + 900,
+          status: 'sent'
+        }
+      ],
+      cursor: 0
+    })
+    expect(ctx.store.getMessage('local_c_other')).toBeTruthy()
+    expect(ctx.store.getMessage('7400999999999999999')).toBeTruthy()
+  })
+})

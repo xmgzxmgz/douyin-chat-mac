@@ -168,6 +168,20 @@ describe('Store · 设置与持久化', () => {
     expect(reopened.getMessage('m9')?.content.text).toBe('hi')
   })
 
+  it('远端旧会话记录不会把本地更晚的最后一条消息覆盖掉', () => {
+    const { store } = makeStore()
+    store.upsertConversations('acc_1', [
+      conversation({ id: 'a', lastMessageAt: 5000, lastMessagePreview: '刚发出去的' })
+    ])
+    // 页面回来的旧记录：时间更早、预览为空
+    store.upsertConversations('acc_1', [
+      conversation({ id: 'a', lastMessageAt: 1000, lastMessagePreview: '' })
+    ])
+    const conv = store.getConversation('a')
+    expect(conv?.lastMessageAt).toBe(5000)
+    expect(conv?.lastMessagePreview).toBe('刚发出去的')
+  })
+
   it('状态文件损坏时备份并降级为空状态，不阻塞启动', () => {
     const dir = mkdtempSync(join(tmpdir(), 'dychat-store-'))
     dirs.push(dir)

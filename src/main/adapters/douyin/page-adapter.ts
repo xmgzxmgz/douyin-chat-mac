@@ -216,19 +216,21 @@ export class DouyinPageAdapter implements ChatAdapter {
     type: Message['type']
     content: MessageContent
     clientId: string
+    conversationTitle?: string
   }): Promise<Message> {
     await this.ensureStarted()
     if (input.type !== 'text') throw new AppError('UNSUPPORTED', '当前只支持发送文本消息')
     const text = (input.content.text ?? '').trim()
     if (!text) throw new AppError('VALIDATION', '消息内容不能为空')
 
+    // 标题优先取内存快照（最新），没有就用上层从本地库带下来的
     const conv = this.bridge.conversation(input.conversationId)
-    if (!conv) throw new AppError('NOT_FOUND', '会话不存在，请先同步一次再发送')
-    if (!conv.title) throw new AppError('UNSUPPORTED', '这个会话没有昵称，无法在页面列表里定位')
+    const title = conv?.title || input.conversationTitle || ''
+    if (!title) throw new AppError('UNSUPPORTED', '这个会话没有昵称，无法在页面列表里定位')
 
     const res = await this.bridge.sendViaPage({
       conversationId: input.conversationId,
-      title: conv.title,
+      title,
       text,
       mode: 'send'
     })

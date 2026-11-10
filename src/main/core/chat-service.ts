@@ -478,7 +478,9 @@ export class ChatService {
       content: input.content,
       clientId,
       replyTo: input.replyTo,
-      localId: clientId
+      localId: clientId,
+      // 页面驱动发送需要标题去点会话；本地库是标题的可靠来源
+      conversationTitle: this.store.getConversation(input.conversationId)?.title
     })
   }
 
@@ -634,14 +636,17 @@ export class ChatService {
   private async applyPull(result: PullResult): Promise<void> {
     const account = this.requireAccount()
     this.store.upsertConversations(account.accountId, result.conversations)
-    const fresh = result.messages.filter((m) => !this.store.getMessage(m.id))
-    for (const m of fresh) {
-      this.store.appendMessage(m)
-      const conv = this.store.getConversation(m.conversationId)
-      if (conv && m.createdAt >= conv.lastMessageAt) {
+    const fresh: Message[] = []
+    for (const m of result.messages) {
+      if (this.store.getMessage(m.id)) continue
+      const merged = this.adoptLocalEcho(m)
+      this.store.appendMessage(merged)
+      fresh.push(merged)
+      const conv = this.store.getConversation(merged.conversationId)
+      if (conv && merged.createdAt >= conv.lastMessageAt) {
         this.store.patchConversation(conv.id, {
-          lastMessageAt: m.createdAt,
-          lastMessagePreview: previewOfType(m.type, encodeContent(m.type, m.content))
+          lastMessageAt: merged.createdAt,
+          lastMessagePreview: previewOfType(merged.type, encodeContent(merged.type, merged.content))
         })
       }
     }
@@ -660,6 +665,33 @@ export class ChatService {
     this.refreshBadge()
     // 好友是从会话反推的：昵称补全后要跟着刷新，否则好友页会一直停在「抖音用户xxxx」
     void this.refreshFriendsQuietly()
+  }
+
+  /**
+   * 认领自己刚发出的消息。
+   *
+   * 页面驱动发送成功后，本地先落一条 ID 为 local_xxx 的占位消息；
+   * 之后同步回来的同一条消息带的是服务端 ID，两者 ID 不同，直接插入就会变成两个气泡。
+   * 这里按「同会话 + 自己 + 文本一致 + 时间相近」把占位消息换掉，保留 clientId 便于 UI 连续更新。
+   */
+  private adoptLocalEcho(message: Message): Message {
+    if (!message.isSelf) return message
+    const text = (message.content.text ?? '').trim()
+    if (!text) return message
+    const recent = this.store.listMessages(message.conversationId, undefined, 60)
+    const hit = recent
+      .filter(
+        (m) =>
+          m.isSelf &&
+          m.status === 'sent' &&
+          m.id.startsWith('local_') &&
+          (m.content.text ?? '').trim() === text &&
+          Math.abs(m.createdAt - message.createdAt) < 120_000
+      )
+      .sort((a, b) => Math.abs(a.createdAt - message.createdAt) - Math.abs(b.createdAt - message.createdAt))[0]
+    if (!hit) return message
+    this.store.deleteMessage(hit.id)
+    return { ...message, clientId: hit.clientId }
   }
 
   /** 把历史消息里非 http(s) 的链接清掉（例如 bitbrowser://），避免点一下就弹系统框 */

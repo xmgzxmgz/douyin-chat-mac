@@ -68,6 +68,12 @@ export interface ChatAdapter {
     clientId: string
     replyTo?: Message['replyTo']
     localId: string
+    /**
+     * 会话标题（可选）。页面驱动发送要靠它去点会话；
+     * 页面侧的会话列表可能只包含最近一部分会话，内存快照不一定有，
+     * 由上层（持有本地库）带上更可靠。
+     */
+    conversationTitle?: string
   }): Promise<Message>
   recallMessage(messageId: string): Promise<void>
   sendTyping(conversationId: string): Promise<void>

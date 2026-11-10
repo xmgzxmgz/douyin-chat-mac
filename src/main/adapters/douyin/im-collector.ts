@@ -112,8 +112,13 @@ export class ImCollector {
     return this.names.size - before
   }
 
+  /**
+   * 单个会话（取归并后的结果）。
+   * 注意：不能用 conversations.get(id) 的原始值——昵称是 JSON 资料补进来的，
+   * 只有 snapshot() 才会把它合并到 title 上；发送时要靠 title 在页面列表里定位。
+   */
   conversation(id: string): ImConversation | undefined {
-    return this.conversations.get(id)
+    return this.snapshot().conversations.find((c) => c.id === id)
   }
 
   /** 还没拿到昵称的会话（用于按需查询用户资料） */

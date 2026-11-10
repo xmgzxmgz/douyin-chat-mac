@@ -188,9 +188,14 @@ export class Store {
     for (const conv of conversations) {
       const prev = this.state.conversations[conv.id]
       const alreadyRead = prev?.readAt !== undefined && conv.lastMessageAt <= prev.readAt
+      // 远端会话记录可能比本地旧（例如页面只回传了历史会话），
+      // 此时不能用它覆盖本地「刚发出/刚收到」的最后一条消息，否则列表预览会回退成空
+      const keepLocalTail = Boolean(prev && prev.lastMessageAt > conv.lastMessageAt)
       this.state.conversations[conv.id] = {
         ...prev,
         ...conv,
+        lastMessageAt: keepLocalTail ? prev!.lastMessageAt : conv.lastMessageAt,
+        lastMessagePreview: keepLocalTail ? prev!.lastMessagePreview : conv.lastMessagePreview,
         // 本地状态（置顶/免打扰/草稿/隐藏）不被远端覆盖
         pinned: conv.pinned || prev?.pinned || false,
         muted: conv.muted || prev?.muted || false,
