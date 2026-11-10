@@ -1,0 +1,26 @@
+appId: com.local.douyinchat
+productName: 抖音桌面聊天
+directories:
+  buildResources: build
+  output: release
+files:
+  - out/**/*
+  - package.json
+# 本地分发无需 asar 封装；若需启用改为 true（部分受限文件系统环境下写 app.asar 会失败）
+asar: false
+mac:
+  category: public.app-category.social-networking
+  icon: build/icon.png
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  darkModeSupport: true
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  extendInfo:
+    NSCameraUsageDescription: 用于拍摄并发送图片
+    NSMicrophoneUsageDescription: 用于录制语音消息
+dmg:
+  title: 抖音桌面聊天
