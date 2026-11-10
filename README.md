@@ -18,6 +18,9 @@
 > ⚠️ 真实模式是用自动化方式访问抖音未公开接口，违反平台用户协议，有被限流/封号风险，
 > 只建议在自己的账号上只读使用。本项目不提供任何绕过风控、伪造签名或抓取他人数据的能力。
 
+> **直接下载**：[Releases](https://github.com/xmgzxmgz/douyin-chat-mac/releases/latest) ·
+> macOS `douyin-chat-*-mac-arm64.dmg` / Windows `douyin-chat-*-win-x64.exe` / Linux `douyin-chat-*-linux-x86_64.AppImage`
+
 ![聊天界面](docs/screenshots/chat.png)
 
 > 截图使用内置演示数据，非真实账号内容。
@@ -207,9 +210,9 @@ npm run dist:all     # 三端一起出
 
 | 平台 | 产物 | 说明 |
 | --- | --- | --- |
-| macOS | `抖音桌面聊天-1.0.0-arm64.dmg` | Apple Silicon；Intel 用不带后缀的那个 |
-| Windows | `抖音桌面聊天-1.0.0-win-x64.exe` | NSIS 安装包，可选安装目录 |
-| Linux | `抖音桌面聊天-1.0.0-linux-x86_64.AppImage` | `chmod +x` 后直接运行 |
+| macOS | `douyin-chat-<ver>-mac-arm64.dmg` / `-mac-x64.dmg` | Apple Silicon / Intel |
+| Windows | `douyin-chat-<ver>-win-x64.exe` | NSIS 安装包，可选安装目录 |
+| Linux | `douyin-chat-<ver>-linux-x86_64.AppImage` | `chmod +x` 后直接运行 |
 
 > 交叉编译 Windows 包时没有 wine，`electron-builder.yml` 里设了
 > `signAndEditExecutable: false` 跳过 rcedit（代价是 exe 的图标/版本信息不被改写）。

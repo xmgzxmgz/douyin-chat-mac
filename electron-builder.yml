@@ -24,8 +24,10 @@ mac:
     NSMicrophoneUsageDescription: 用于录制语音消息
 dmg:
   title: 抖音桌面聊天
+  artifactName: douyin-chat-${version}-mac-${arch}.${ext}
 
 win:
+  artifactName: douyin-chat-${version}-win-${arch}.${ext}
   icon: build/icon.png
   target:
     - target: nsis
@@ -41,6 +43,7 @@ nsis:
   artifactName: ${productName}-${version}-win-${arch}.${ext}
 
 linux:
+  artifactName: douyin-chat-${version}-linux-${arch}.${ext}
   icon: build/icon.png
   category: Network
   synopsis: 抖音私信桌面客户端
