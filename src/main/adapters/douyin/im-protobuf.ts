@@ -229,6 +229,8 @@ export interface ImConversation {
   peerId: string
   /** 私信对方/群主的 sec_uid（详情 #13），用于查昵称 */
   peerSecUid: string
+  /** 会话级 121 字节 token（会话 #4），发消息时随请求带回 */
+  convToken: string
   lastMessageAt: number
   memberCount: number
   participants: ImParticipant[]
@@ -469,6 +471,7 @@ export function decodeConversationFields(outer: Field[], selfId: string): ImConv
     avatarUrl,
     peerId: type === 'private' ? (peer?.id ?? '') : '',
     peerSecUid: toText(pick(detail, 13)?.sub) || peer?.secUid || '',
+    convToken: Buffer.from(pick(outer, 4)?.sub ?? Buffer.alloc(0)).toString('latin1'),
     lastMessageAt: (pick(detail, 4)?.v ?? 0) * 1000,
     memberCount: participants.length,
     participants

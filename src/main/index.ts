@@ -161,6 +161,23 @@ async function bootstrap(): Promise<void> {
     }, 700)
   }
 
+  // 开发辅助：CHAT_SEND_TEST="<conversationId>|<文本>" 启动后发一条消息并打印结果
+  if (process.env.CHAT_SEND_TEST) {
+    setTimeout(() => {
+      void (async () => {
+        const [convId, ...rest] = (process.env.CHAT_SEND_TEST as string).split('|')
+        try {
+          const m = await service?.send({ conversationId: convId, type: 'text', content: { text: rest.join('|') } })
+          if (!m) throw new Error('ChatService 未就绪')
+          logger.info(`SEND 成功 id=${m.id} status=${m.status}`)
+        } catch (err) {
+          logger.warn(`SEND 失败：${(err as Error).message}`)
+        }
+        setTimeout(() => app.quit(), 2000)
+      })()
+    }, 18_000)
+  }
+
   // 自动化验收：CHAT_DEMO=1 使用演示账号登录；CHAT_SCREENSHOT=<path> 截图后退出
   if (process.env.CHAT_DEMO === '1') {
     try {

@@ -112,6 +112,10 @@ export class ImCollector {
     return this.names.size - before
   }
 
+  conversation(id: string): ImConversation | undefined {
+    return this.conversations.get(id)
+  }
+
   /** 还没拿到昵称的会话（用于按需查询用户资料） */
   unresolvedSecUids(limit = 40): string[] {
     const out: string[] = []

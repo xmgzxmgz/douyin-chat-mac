@@ -30,8 +30,8 @@ export async function sniffImRequests(logger: Logger, waitMs = 15000): Promise<v
 
     if (process.env.CHAT_PROBE_SEND === '1') {
       const probe = await bridge.probeSendEndpoint()
-      logger.info(`BRIDGE 发送接口探测：url=${probe.url} 扫描 ${probe.total} 个 JS，命中 ${probe.hits.length}，可编辑框=${JSON.stringify(probe.editables)}`)
-      for (const h of probe.hits) logger.info(`BRIDGE 命中 ${h.url}：${h.snip.replace(/\s+/g, ' ').slice(0, 300)}`)
+      logger.info(`BRIDGE DOM 探测：${JSON.stringify(probe).slice(0, 400)}`)
+
     }
 
     // 探测昵称来源：把页面刚发过的「用户资料」请求原样重放一次

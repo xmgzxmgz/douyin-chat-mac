@@ -1,7 +1,8 @@
-import { BrowserWindow, session } from 'electron'
+import { BrowserWindow, net, session } from 'electron'
 import { AppError } from '../../core/errors'
 import type { Logger } from '../../core/notifier'
 import { ImCollector, type IngestStats } from './im-collector'
+import { buildSendBody } from './im-send'
 
 /**
  * 把抖音网页当作「传输层」。
@@ -98,47 +99,44 @@ export class ImWebBridge {
    * 在前端 JS 里找「发送消息」的接口与 protobuf 定义（只读探测，不发送）。
    * 目的：拿到 /v1/message/send 对应的 cmd 常量与字段名，避免靠猜。
    */
-  async probeSendEndpoint(): Promise<{ total: number; hits: Array<{ url: string; snip: string }>; editables?: unknown; url?: string }> {
+  async probeSendEndpoint(): Promise<Record<string, unknown>> {
     const wc = this.win?.webContents
-    if (!wc) return { total: 0, hits: [] }
+    if (!wc) return { error: 'no window' }
+    const wantTitle = (process.env.CHAT_PROBE_TITLE ?? '').trim()
     const script = `
       (async () => {
-        const editables = [...document.querySelectorAll('[contenteditable="true"], textarea')].map((el) => ({
-          tag: el.tagName,
-          hint: (el.getAttribute('placeholder') || el.getAttribute('aria-label') || el.getAttribute('data-placeholder') || '').slice(0, 20),
-          cls: (el.className || '').toString().slice(0, 40)
-        }))
-        const fromScripts = [...document.querySelectorAll('script[src]')].map((s) => s.src)
-        const fromPerf = performance.getEntriesByType('resource').map((e) => e.name)
-        const uniq = [...new Set([...fromScripts, ...fromPerf])]
-          .filter((u) => /^https?:/.test(u) && /\.js(\?|$)/.test(u))
-          .slice(0, 80)
-        const hits = []
-        for (const u of uniq) {
-          try {
-            const text = await (await fetch(u)).text()
-            for (const needle of ['message/send', 'send_message', 'SendMessageRequest']) {
-              const i = text.indexOf(needle)
-              if (i >= 0) {
-                hits.push({ url: u.split('/').pop() || u, snip: text.slice(Math.max(0, i - 160), i + 220) })
-                break
-              }
-            }
-          } catch (e) {}
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+        const dump = (tag) => {
+          const pick = (sel) => [...document.querySelectorAll(sel)].slice(0, 4).map((e) => ({
+            tag: e.tagName,
+            cls: String(e.className || '').slice(0, 46),
+            hint: (e.getAttribute('data-placeholder') || e.getAttribute('placeholder') || e.getAttribute('aria-label') || '').slice(0, 18)
+          }))
+          return {
+            tag,
+            editables: pick('[contenteditable="true"], textarea, div[role="textbox"]'),
+            sendBtn: pick('[data-e2e*="send"], button[class*="send"], span[class*="send"]')
+          }
         }
-        return { total: uniq.length, hits: hits.slice(0, 4), editables, url: location.href.slice(0, 120) }
+        const before = dump('before')
+        const items = [...document.querySelectorAll('[class*="conversation"]')]
+        const want = ${JSON.stringify(wantTitle)}
+        let target = items[0]
+        if (want) {
+          const hit = items.find((el) => (el.innerText || '').includes(want))
+          if (hit) target = hit
+        }
+        const clickedText = target ? (target.innerText || '').slice(0, 20) : ''
+        if (target) target.click()
+        await sleep(2600)
+        const after = dump('after')
+        return { url: location.href.slice(0, 90), count: items.length, clickedText, before, after }
       })()
     `
     try {
-      return (await withTimeout(wc.executeJavaScript(script), 30_000, '探测超时')) as {
-        total: number
-        hits: Array<{ url: string; snip: string }>
-        editables?: unknown
-        url?: string
-      }
+      return (await withTimeout(wc.executeJavaScript(script), 25_000, '探测超时')) as Record<string, unknown>
     } catch (err) {
-      this.logger?.warn(`探测发送接口失败：${(err as Error).message}`)
-      return { total: 0, hits: [] }
+      return { error: (err as Error).message }
     }
   }
 
@@ -307,6 +305,72 @@ export class ImWebBridge {
 
   since(cursor: number): ReturnType<ImCollector['since']> {
     return this.collector.since(cursor)
+  }
+
+  /**
+   * 发送一条文本消息。
+   *
+   * 请求体结构已从真实抓包完整解出（见 im-send.ts）。请求本身由页面发起，
+   * 这样 Cookie / a_bogus 签名 / 指纹都由页面负责，我们只提供 body。
+   */
+  async sendText(input: {
+    conversationId: string
+    text: string
+    selfUid: string
+    identityToken: string
+  }): Promise<{ ok: boolean; status: number; message: string }> {
+    const conv = this.collector.conversation(input.conversationId)
+    if (!conv) return { ok: false, status: 0, message: '会话不存在（需要先同步一次）' }
+    if (!conv.convToken) return { ok: false, status: 0, message: '缺少会话 token（会话 #4 为空）' }
+
+    const { body, clientId } = buildSendBody({
+      conversationId: input.conversationId,
+      text: input.text,
+      conversationToken: conv.convToken,
+      identityToken: input.identityToken,
+      selfUid: input.selfUid
+    })
+
+    // 用主进程的 session.fetch：不带 CORS 约束，且自动带上该分区的 Cookie
+    const ses = session.fromPartition(this.partition)
+    const url = 'https://imapi.douyin.com/v1/message/send' + (process.env.CHAT_SEND_QUERY ?? '')
+    try {
+      // 用 net.request：不走 CORS 检查，且能指定 session 复用分区 Cookie
+      const buf = await new Promise<{ status: number; body: Buffer }>((resolve, reject) => {
+        const req = net.request({ method: 'POST', url, session: ses, useSessionCookies: true })
+        req.setHeader('content-type', 'application/x-protobuf')
+        const chunks: Buffer[] = []
+        req.on('response', (res) => {
+          res.on('data', (c: Buffer) => chunks.push(c))
+          res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }))
+          res.on('error', reject)
+        })
+        req.on('error', reject)
+        req.write(Buffer.from(body))
+        req.end()
+      })
+      this.logger?.info(
+        `BRIDGE 发送返回：status=${buf.status} bytes=${buf.body.length} clientId=${clientId} head=${buf.body
+          .subarray(0, 90)
+          .toString('latin1')
+          .replace(/[^\x20-\x7e]/g, '·')}`
+      )
+      return { ok: buf.status === 200, status: buf.status, message: buf.body.subarray(0, 200).toString('latin1') }
+    } catch (err) {
+      this.logger?.warn(`BRIDGE 发送异常：${(err as Error).message}`)
+      return { ok: false, status: 0, message: (err as Error).message }
+    }
+  }
+
+  /** 记录页面最近一次 imapi 请求的 query，发送时复用（含 msToken 等） */
+  private sendUrl: string | null = null
+
+  setSendUrl(url: string): void {
+    this.sendUrl = url
+  }
+
+  private buildSendUrl(): string {
+    return 'https://imapi.douyin.com/v1/message/send'
   }
 
   /** 还没拿到昵称、需要查询的 sec_uid */

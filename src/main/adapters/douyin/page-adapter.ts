@@ -45,8 +45,10 @@ interface SelfProfile {
  */
 export class DouyinPageAdapter implements ChatAdapter {
   readonly mode = 'douyin-web' as const
-  /** 只读同步：发送接口字段未验证，先不开放，避免「本地成功、对方收不到」 */
-  readonly canSend = false
+  /** 拿到 identity token 后开启（见 sendMessage 注释） */
+  get canSend(): boolean {
+    return process.env.CHAT_ENABLE_SEND === '1' && Boolean(process.env.CHAT_IDENTITY_TOKEN)
+  }
 
   private readonly bridge: ImWebBridge
   private readonly logger?: Logger
@@ -199,11 +201,47 @@ export class DouyinPageAdapter implements ChatAdapter {
       .map((m) => ({ ...m, accountId: this.accountId }))
   }
 
-  async sendMessage(): Promise<Message> {
-    throw new AppError(
-      'UNSUPPORTED',
-      '发送仍未启用：/v1/message/send 的 protobuf 字段未验证。当前为只读同步，避免出现「本地显示已发送、对方实际收不到」。'
-    )
+  /**
+   * 发送文本消息。
+   *
+   * 请求体结构来自一次真实抓包（cmd=100，见 im-send.ts）；请求由页面同源发出，
+   * Cookie / a_bogus / 指纹都交给页面。唯一需要外部提供的是 identity_security_token。
+   */
+  async sendMessage(input: {
+    conversationId: string
+    type: Message['type']
+    content: MessageContent
+    clientId: string
+  }): Promise<Message> {
+    await this.ensureStarted()
+    if (input.type !== 'text') throw new AppError('UNSUPPORTED', '当前只支持发送文本消息')
+    const text = (input.content.text ?? '').trim()
+    if (!text) throw new AppError('VALIDATION', '消息内容不能为空')
+
+    const identityToken = process.env.CHAT_IDENTITY_TOKEN ?? ''
+    if (!identityToken) throw new AppError('UNSUPPORTED', '缺少 identity_security_token，发送未启用')
+
+    const res = await this.bridge.sendText({
+      conversationId: input.conversationId,
+      text,
+      selfUid: this.selfId,
+      identityToken
+    })
+    if (!res.ok) throw new AppError('SERVER', `发送失败（HTTP ${res.status}）：${res.message}`)
+
+    return {
+      id: `local_${input.clientId}`,
+      clientId: input.clientId,
+      accountId: this.accountId,
+      conversationId: input.conversationId,
+      type: 'text',
+      content: { text },
+      senderId: this.selfId,
+      senderName: '我',
+      isSelf: true,
+      createdAt: Date.now(),
+      status: 'sent'
+    }
   }
 
   async recallMessage(): Promise<void> {

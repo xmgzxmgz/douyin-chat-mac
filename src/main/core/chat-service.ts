@@ -98,6 +98,7 @@ export class ChatService {
 
   async init(): Promise<void> {
     this.purgeUnsupportedFailures()
+    this.sanitizeLinks()
     const accountId = this.store.activeAccountId
     if (!accountId) return
     const account = this.store.getAccount(accountId)
@@ -643,6 +644,18 @@ export class ChatService {
     this.refreshBadge()
     // 好友是从会话反推的：昵称补全后要跟着刷新，否则好友页会一直停在「抖音用户xxxx」
     void this.refreshFriendsQuietly()
+  }
+
+  /** 把历史消息里非 http(s) 的链接清掉（例如 bitbrowser://），避免点一下就弹系统框 */
+  private sanitizeLinks(): void {
+    let fixed = 0
+    for (const m of this.store.listAllMessages()) {
+      const url = m.content?.url
+      if (!url || /^https?:\/\//i.test(url)) continue
+      this.store.updateMessage(m.id, { content: { ...m.content, url: undefined } })
+      fixed++
+    }
+    if (fixed) this.logger.info(`已清理 ${fixed} 条非 http(s) 链接`)
   }
 
   /** 清掉旧版本在只读模式下产生的「发送失败」记录（会渲染成红色感叹号气泡） */
