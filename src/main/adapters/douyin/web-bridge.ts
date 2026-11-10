@@ -94,6 +94,54 @@ export class ImWebBridge {
     return this.imPostSample
   }
 
+  /**
+   * 在前端 JS 里找「发送消息」的接口与 protobuf 定义（只读探测，不发送）。
+   * 目的：拿到 /v1/message/send 对应的 cmd 常量与字段名，避免靠猜。
+   */
+  async probeSendEndpoint(): Promise<{ total: number; hits: Array<{ url: string; snip: string }>; editables?: unknown; url?: string }> {
+    const wc = this.win?.webContents
+    if (!wc) return { total: 0, hits: [] }
+    const script = `
+      (async () => {
+        const editables = [...document.querySelectorAll('[contenteditable="true"], textarea')].map((el) => ({
+          tag: el.tagName,
+          hint: (el.getAttribute('placeholder') || el.getAttribute('aria-label') || el.getAttribute('data-placeholder') || '').slice(0, 20),
+          cls: (el.className || '').toString().slice(0, 40)
+        }))
+        const fromScripts = [...document.querySelectorAll('script[src]')].map((s) => s.src)
+        const fromPerf = performance.getEntriesByType('resource').map((e) => e.name)
+        const uniq = [...new Set([...fromScripts, ...fromPerf])]
+          .filter((u) => /^https?:/.test(u) && /\.js(\?|$)/.test(u))
+          .slice(0, 80)
+        const hits = []
+        for (const u of uniq) {
+          try {
+            const text = await (await fetch(u)).text()
+            for (const needle of ['message/send', 'send_message', 'SendMessageRequest']) {
+              const i = text.indexOf(needle)
+              if (i >= 0) {
+                hits.push({ url: u.split('/').pop() || u, snip: text.slice(Math.max(0, i - 160), i + 220) })
+                break
+              }
+            }
+          } catch (e) {}
+        }
+        return { total: uniq.length, hits: hits.slice(0, 4), editables, url: location.href.slice(0, 120) }
+      })()
+    `
+    try {
+      return (await withTimeout(wc.executeJavaScript(script), 30_000, '探测超时')) as {
+        total: number
+        hits: Array<{ url: string; snip: string }>
+        editables?: unknown
+        url?: string
+      }
+    } catch (err) {
+      this.logger?.warn(`探测发送接口失败：${(err as Error).message}`)
+      return { total: 0, hits: [] }
+    }
+  }
+
   /** 等页面的用户资料请求出现（首屏后几百毫秒） */
   private async waitForUserInfoSample(timeoutMs: number): Promise<boolean> {
     const deadline = Date.now() + timeoutMs

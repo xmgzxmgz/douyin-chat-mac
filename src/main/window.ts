@@ -17,8 +17,10 @@ export function createMainWindow(): BrowserWindow {
     minHeight: 620,
     show: false,
     backgroundColor: '#f6f7f9',
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 16, y: 18 },
+    // macOS 用内嵌红绿灯；Windows/Linux 保留系统边框，否则没有关闭按钮
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 18 } }
+      : {}),
     title: '抖音桌面聊天',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),

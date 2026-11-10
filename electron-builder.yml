@@ -24,3 +24,27 @@ mac:
     NSMicrophoneUsageDescription: 用于录制语音消息
 dmg:
   title: 抖音桌面聊天
+
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+  # 跨平台打包时没有 wine，跳过 rcedit（不改 exe 图标/版本信息）
+  signAndEditExecutable: false
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  shortcutName: 抖音桌面聊天
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
+
+linux:
+  icon: build/icon.png
+  category: Network
+  synopsis: 抖音私信桌面客户端
+  target:
+    - AppImage
+    - tar.gz
+  artifactName: ${productName}-${version}-linux-${arch}.${ext}

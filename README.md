@@ -194,22 +194,41 @@ electron_mirror=https://npmmirror.com/mirrors/electron/
 node node_modules/electron/install.js
 ```
 
-### 5.2 打包
+### 5.2 打包（macOS / Windows / Linux）
+
+三端都能在 Mac 上交叉编译，不需要额外装虚拟机：
 
 ```bash
-# 仅生成 .app（最快，用于本地验证）
-npm run dist:dir
-
-# 生成 .dmg（arm64 + x64）
-npm run dist:mac
+npm run dist:mac     # .dmg（arm64 + x64）
+npm run dist:win     # Windows 安装包 .exe（x64）
+npm run dist:linux   # AppImage + tar.gz（x64）
+npm run dist:all     # 三端一起出
 ```
 
-产物在 `release/`：`抖音桌面聊天-1.0.0-arm64.dmg`、`抖音桌面聊天-1.0.0.dmg`、
-`release/mac-arm64/抖音桌面聊天.app`。
+| 平台 | 产物 | 说明 |
+| --- | --- | --- |
+| macOS | `抖音桌面聊天-1.0.0-arm64.dmg` | Apple Silicon；Intel 用不带后缀的那个 |
+| Windows | `抖音桌面聊天-1.0.0-win-x64.exe` | NSIS 安装包，可选安装目录 |
+| Linux | `抖音桌面聊天-1.0.0-linux-x86_64.AppImage` | `chmod +x` 后直接运行 |
 
-> 默认不做代码签名（`CSC_IDENTITY_AUTO_DISCOVERY=false`）。首次打开如提示「无法验证开发者」，
+> 交叉编译 Windows 包时没有 wine，`electron-builder.yml` 里设了
+> `signAndEditExecutable: false` 跳过 rcedit（代价是 exe 的图标/版本信息不被改写）。
+> 想要「原生」产物用仓库里的 GitHub Actions（`.github/workflows/release.yml`），
+> 三个平台各自在对应 runner 上构建：推 `v*` 标签即触发。
+
+> 默认不做代码签名（`CSC_IDENTITY_AUTO_DISCOVERY=false`）。macOS 首次打开如提示「无法验证开发者」，
 > 右键 → 打开，或执行 `xattr -dr com.apple.quarantine "抖音桌面聊天.app"`。
-> 对外分发请配置 Apple Developer ID 并公证。
+> Windows 首次运行 SmartScreen 会拦，点「更多信息 → 仍要运行」。
+
+### 5.3 平台差异
+
+| 能力 | macOS | Windows | Linux |
+| --- | --- | --- | --- |
+| 窗口装饰 | 内嵌红绿灯（`hiddenInset`） | 系统标题栏 | 系统标题栏 |
+| 托盘 | ✅ | ✅ | 依赖 `libappindicator3`，不可用时自动跳过 |
+| 通知 | ✅ | ✅（已设 AppUserModelID） | 依赖桌面通知服务 |
+| 分享预览窗 | ✅ | ✅ | ✅ |
+| 真实模式（页面传输） | ✅ | ✅ | ✅（Chromium 同源行为一致） |
 
 ---
 

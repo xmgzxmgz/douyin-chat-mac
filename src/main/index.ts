@@ -29,6 +29,14 @@ let lastNudge = 0
 const dataDir = join(app.getPath('userData'), 'data')
 
 function buildTray(): void {
+  try {
+    buildTrayInner()
+  } catch (err) {
+    logger.warn(`托盘不可用（已跳过）：${(err as Error).message}`)
+  }
+}
+
+function buildTrayInner(): void {
   const size = 18
   const buffer = Buffer.alloc(size * size * 4)
   for (let i = 0; i < size * size; i++) {
@@ -254,7 +262,7 @@ async function bootstrap(): Promise<void> {
           }
           // 原生子视图（WebContentsView）不在渲染层，capturePage 抓不到；
           // 用 macOS 的窗口截图把整窗一起拍下来
-          if (process.env.CHAT_SCREENSHOT_NATIVE === '1') {
+          if (process.env.CHAT_SCREENSHOT_NATIVE === '1' && process.platform === 'darwin') {
             const out = process.env.CHAT_SCREENSHOT
             if (out) {
               const shot = (target: BrowserWindow, path: string): Promise<void> =>
@@ -329,6 +337,8 @@ if (!gotLock) {
 if (process.env.CHAT_USER_DATA) {
   app.setPath('userData', process.env.CHAT_USER_DATA)
 }
+
+if (process.platform === 'win32') app.setAppUserModelId('com.local.douyinchat')
 
 app.whenReady().then(bootstrap).catch((err) => {
     logger.error(`启动失败：${(err as Error).message}`)

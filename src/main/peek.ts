@@ -70,7 +70,7 @@ export function openPeek(parent: BrowserWindow, rawUrl: string): void {
     }
   })
 
-  peekWindow.setWindowButtonVisibility?.(false)
+  if (process.platform === 'darwin') peekWindow.setWindowButtonVisibility?.(false)
   peekWindow.webContents.setUserAgent(IPHONE_UA)
   peekWindow.webContents.setWindowOpenHandler(({ url: target }) => {
     if (/^https?:\/\//.test(target)) void shell.openExternal(target)

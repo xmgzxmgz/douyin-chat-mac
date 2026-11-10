@@ -28,6 +28,12 @@ export async function sniffImRequests(logger: Logger, waitMs = 15000): Promise<v
     }
     logger.info('BRIDGE 诊断：以上仅含数量与结构，不含标题、头像与正文')
 
+    if (process.env.CHAT_PROBE_SEND === '1') {
+      const probe = await bridge.probeSendEndpoint()
+      logger.info(`BRIDGE 发送接口探测：url=${probe.url} 扫描 ${probe.total} 个 JS，命中 ${probe.hits.length}，可编辑框=${JSON.stringify(probe.editables)}`)
+      for (const h of probe.hits) logger.info(`BRIDGE 命中 ${h.url}：${h.snip.replace(/\s+/g, ' ').slice(0, 300)}`)
+    }
+
     // 探测昵称来源：把页面刚发过的「用户资料」请求原样重放一次
     if (process.env.CHAT_PROBE_USERINFO === '1') {
       const probe = await bridge.replayUserInfo()
